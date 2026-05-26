@@ -195,13 +195,66 @@ public class StickerContentProvider extends ContentProvider {
         return stickerPackMap;
     }
 
+    private boolean isCallerSelf() {
+        Context context = getContext();
+        if (context == null) return true;
+        try {
+            String callingPackage = getCallingPackage();
+            if (callingPackage == null) {
+                return true;
+            }
+            return callingPackage.equals(context.getPackageName());
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private List<StickerPack> getStickerPackListForQuery() {
+        List<StickerPack> all = getStickerPackList();
+        if (isCallerSelf()) {
+            return all;
+        }
+
+        List<StickerPack> processed = new ArrayList<>();
+        for (StickerPack pack : all) {
+            if (StickerPackChunkManager.needsChunking(pack)) {
+                processed.addAll(StickerPackChunkManager.splitIntoChunks(pack));
+            } else {
+                processed.add(pack);
+            }
+        }
+        return processed;
+    }
+
+    private StickerPack getStickerPackByIdentifier(String identifier) {
+        if (identifier == null) return null;
+        StickerPack pack = getStickerPackMap().get(identifier);
+        if (pack != null) return pack;
+
+        if (isChunkIdentifier(identifier)) {
+            String originalId = getOriginalIdentifier(identifier);
+            if (originalId != null) {
+                StickerPack originalPack = getStickerPackMap().get(originalId);
+                if (originalPack != null) {
+                    List<StickerPack> chunks = StickerPackChunkManager.splitIntoChunks(originalPack);
+                    for (StickerPack chunk : chunks) {
+                        if (identifier.equals(chunk.identifier)) {
+                            return chunk;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     private Cursor getPackForAllStickerPacks(@NonNull Uri uri) {
-        return getStickerPackInfo(uri, getStickerPackList());
+        return getStickerPackInfo(uri, getStickerPackListForQuery());
     }
 
     private Cursor getCursorForSingleStickerPack(@NonNull Uri uri) {
         final String identifier = uri.getLastPathSegment();
-        StickerPack stickerPack = getStickerPackMap().get(identifier);
+        StickerPack stickerPack = getStickerPackByIdentifier(identifier);
         if (stickerPack != null) {
             return getStickerPackInfo(uri, Collections.singletonList(stickerPack));
         }
@@ -232,7 +285,7 @@ public class StickerContentProvider extends ContentProvider {
     private Cursor getStickersForAStickerPack(@NonNull Uri uri) {
         final String identifier = uri.getLastPathSegment();
         MatrixCursor cursor = new MatrixCursor(new String[]{STICKER_FILE_NAME_IN_QUERY, STICKER_FILE_EMOJI_IN_QUERY, STICKER_FILE_ACCESSIBILITY_TEXT_IN_QUERY});
-        StickerPack stickerPack = getStickerPackMap().get(identifier);
+        StickerPack stickerPack = getStickerPackByIdentifier(identifier);
         if (stickerPack != null) {
             for (Sticker sticker : stickerPack.getStickers()) {
                 cursor.addRow(new Object[]{sticker.imageFileName, TextUtils.join(",", sticker.emojis), sticker.accessibilityText});
@@ -263,7 +316,7 @@ public class StickerContentProvider extends ContentProvider {
         }
         String fileName = fileBuilder.toString();
 
-        StickerPack stickerPack = getStickerPackMap().get(identifier);
+        StickerPack stickerPack = getStickerPackByIdentifier(identifier);
         if (stickerPack != null) {
             if (fileName.equals(stickerPack.trayImageFile)) return fetchFile(uri, fileName, identifier);
 
@@ -287,18 +340,33 @@ public class StickerContentProvider extends ContentProvider {
                 }
             }
         }
-        return null;
+
+        // Best-effort fallback: if metadata is stale (e.g., chunk just added),
+        // try to serve the asset directly from storage.
+        try {
+            return fetchFile(uri, fileName, identifier);
+        } catch (FileNotFoundException ignored) {
+            return null;
+        }
     }
 
     private AssetFileDescriptor fetchFile(@NonNull Uri uri, @NonNull String fileName, @NonNull String identifier) throws FileNotFoundException {
         Context context = getContext(); if (context == null) return null;
         String folderPath = WastickerParser.getStickerFolderPath(context);
 
+        String resolvedIdentifier = identifier;
+        if (isChunkIdentifier(identifier)) {
+            String originalId = getOriginalIdentifier(identifier);
+            if (originalId != null) {
+                resolvedIdentifier = originalId;
+            }
+        }
+
         if (WastickerParser.isCustomPathUri(context)) {
             try {
                 DocumentFile root = DocumentFile.fromTreeUri(context, Uri.parse(folderPath));
                 if (root != null) {
-                    DocumentFile packDir = root.findFile(identifier);
+                    DocumentFile packDir = root.findFile(resolvedIdentifier);
                     if (packDir != null) {
                         DocumentFile file = packDir.findFile(fileName);
                         if (file != null) {
@@ -311,7 +379,7 @@ public class StickerContentProvider extends ContentProvider {
             } catch (Exception e) { Log.e("StickerCP", "SAF fetch failed", e); }
         } else {
             try {
-                File userFile = new File(new File(folderPath, identifier), fileName);
+                File userFile = new File(new File(folderPath, resolvedIdentifier), fileName);
                 if (userFile.exists()) {
                     return new AssetFileDescriptor(ParcelFileDescriptor.open(userFile, ParcelFileDescriptor.MODE_READ_ONLY), 0, userFile.length());
                 }
@@ -321,11 +389,11 @@ public class StickerContentProvider extends ContentProvider {
         }
 
         try {
-            AssetFileDescriptor afd = context.getAssets().openFd(identifier + "/" + fileName);
+            AssetFileDescriptor afd = context.getAssets().openFd(resolvedIdentifier + "/" + fileName);
             return afd;
         } catch (IOException ignored) {
             // If it's not in assets and not in the user folder, it truly doesn't exist
-            throw new FileNotFoundException(identifier + "/" + fileName);
+            throw new FileNotFoundException(resolvedIdentifier + "/" + fileName);
         }
     }
 

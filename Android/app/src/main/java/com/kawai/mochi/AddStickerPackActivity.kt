@@ -157,7 +157,7 @@ abstract class AddStickerPackActivity : BaseActivity() {
      */
     private fun launchNextChunkOrFinish() {
         if (pendingChunks.isEmpty()) {
-            // All chunks sent — clean up temp entries.
+            // All chunks sent — clean up.
             hideProgressBar()
             finishChunkSession(cancelled = false)
             return
@@ -178,16 +178,6 @@ abstract class AddStickerPackActivity : BaseActivity() {
                 } ?: run {
                     hideProgressBar()
                     return@launch
-                }
-
-                withContext(Dispatchers.IO) {
-                    StickerPackChunkManager.registerChunk(
-                        this@AddStickerPackActivity, chunk, originalPack
-                    ) { current, total ->
-                        lifecycleScope.launch(Dispatchers.Main) {
-                            updateProgress(current, total, getString(R.string.import_progress, current, total))
-                        }
-                    }
                 }
 
                 currentChunkIndex++
@@ -222,28 +212,13 @@ abstract class AddStickerPackActivity : BaseActivity() {
     }
 
     private fun finishChunkSession(cancelled: Boolean) {
-        val sourceId = chunkSourceIdentifier
         resetChunkState()
-
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                try {
-                    if (sourceId != null) {
-                        StickerPackChunkManager.cleanupChunks(
-                            this@AddStickerPackActivity, sourceId
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Chunk cleanup failed", e)
-                }
-            }
-            if (!cancelled) {
-                Toast.makeText(
-                    this@AddStickerPackActivity,
-                    R.string.chunk_add_complete,
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
+        if (!cancelled) {
+            Toast.makeText(
+                this@AddStickerPackActivity,
+                R.string.chunk_add_complete,
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
