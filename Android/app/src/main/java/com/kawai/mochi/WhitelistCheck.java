@@ -42,8 +42,16 @@ class WhitelistCheck {
             boolean consumerResult = consumerInstalled && isStickerPackWhitelistedInWhatsAppConsumer(context, identifier);
             boolean smbResult = smbInstalled && isStickerPackWhitelistedInWhatsAppSmb(context, identifier);
 
-            // If it's whitelisted in EITHER app, show as whitelisted
-            return consumerResult || smbResult;
+            if (consumerResult || smbResult) {
+                return true;
+            }
+
+            // Fallback for chunked packs: check if the first chunk is whitelisted in WhatsApp
+            String chunk0Identifier = identifier + StickerPackChunkManager.CHUNK_SUFFIX + "0";
+            boolean consumerChunkResult = consumerInstalled && isStickerPackWhitelistedInWhatsAppConsumer(context, chunk0Identifier);
+            boolean smbChunkResult = smbInstalled && isStickerPackWhitelistedInWhatsAppSmb(context, chunk0Identifier);
+
+            return consumerChunkResult || smbChunkResult;
         } catch (Exception e) {
             return false;
         }

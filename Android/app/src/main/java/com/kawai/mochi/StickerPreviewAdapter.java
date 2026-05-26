@@ -44,9 +44,9 @@ public class StickerPreviewAdapter extends RecyclerView.Adapter<StickerPreviewAd
     // POWER-OF-TWO RESOLUTION: 32px is 1/16th of 512px, which optimizes hardware downsampling
     private static final int LIST_DECODE_SIZE_PX = 32;
     private static final int LIST_ANIMATED_DECODE_SIZE_PX = 16;
-    // Grid stickers are decoded at 70% of their display size to cut memory and speed up loading.
+    // Grid stickers are decoded at 30% of their display size to cut memory and play animations smoothly.
     // The expanded preview always uses full-res (handled separately in StickerPackDetailsActivity).
-    private static final float GRID_DECODE_SCALE = 0.70f;
+    private static final float GRID_DECODE_SCALE = 0.30f;
 
     private List<Sticker> stickers;
     private String packIdentifier;

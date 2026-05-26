@@ -49,7 +49,7 @@ public class StickerPackChunkManager {
             List<Sticker> slice = new ArrayList<>(all.subList(start, end));
 
             String chunkId = original.identifier + CHUNK_SUFFIX + chunkIndex;
-            String chunkName = original.name + " (" + (chunkIndex + 1) + "/" + numChunks(total) + ")";
+            String chunkName = original.name;
 
             StickerPack chunk = new StickerPack(
                     chunkId,

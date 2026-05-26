@@ -1032,7 +1032,10 @@ async def create_simple_zip(
                         converted = await convert_to_whatsapp_animated(sticker_data, sticker.is_animated)
                     else:
                         converted = await _run_cpu_bound(_convert_static_bytes_to_webp, sticker_data)
-                    return i, converted.getvalue(), "webp", None
+                    converted_bytes = converted.getvalue()
+                    if len(converted_bytes) > WA_MAX_BYTES:
+                        return i, None, None, f"converted output is {len(converted_bytes) // 1024}KB (>500KB)"
+                    return i, converted_bytes, "webp", None
                 else:
                     ext = "tgs" if sticker.is_animated else ("webm" if sticker.is_video else "webp")
                     return i, sticker_data, ext, None

@@ -108,11 +108,17 @@ public class EditStickerAdapter extends RecyclerView.Adapter<EditStickerAdapter.
         }
 
         holder.removeButton.setOnClickListener(v -> {
-            if (listener != null) listener.onRemoveClicked(position);
+            int pos = holder.getBindingAdapterPosition();
+            if (pos != RecyclerView.NO_POSITION && listener != null) {
+                listener.onRemoveClicked(pos);
+            }
         });
 
         holder.itemView.setOnClickListener(v -> {
-            if (listener != null) listener.onStickerClicked(position, v);
+            int pos = holder.getBindingAdapterPosition();
+            if (pos != RecyclerView.NO_POSITION && listener != null) {
+                listener.onStickerClicked(pos, v);
+            }
         });
     }
 
