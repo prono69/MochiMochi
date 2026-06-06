@@ -599,7 +599,8 @@ def _get_process_pool():
     """Lazy-init ProcessPoolExecutor — avoids recursive pool creation in workers."""
     global _PROCESS_POOL
     if _PROCESS_POOL is None:
-        _PROCESS_POOL = concurrent.futures.ProcessPoolExecutor(max_workers=2)
+        max_workers = max(1, (os.cpu_count() or 2) // 2)
+        _PROCESS_POOL = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
     return _PROCESS_POOL
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -726,7 +727,7 @@ async def convert_video_to_animated_webp(video_data: bytes) -> BytesIO:
         # For WebM stickers, duration metadata is often broken (reports 0.001-0.002s for 1-2s videos).
         # 20fps is visually smooth at sticker size and cuts frame count by ~17% vs 24fps,
         # reducing encode time accordingly.
-        target_fps = min(input_fps, 20.0)
+        target_fps = min(input_fps, 15.0)
         target_fps = max(target_fps, 8.0)
         frame_duration_ms = max(8, int(1000.0 / target_fps))
         
@@ -895,7 +896,7 @@ async def create_simple_zip(
         'skipped_reasons': []
     }
     
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(2)
 
     async def _process_one(i: int, sticker):
         """Returns (index, data_bytes, extension, skip_reason_or_None)"""
@@ -1015,7 +1016,7 @@ async def create_wastickers_zip(
         pack_type = "Animated" if should_be_animated else "Static"
         logger.info(f"Pack type determined: {pack_type} ({sum(1 for s in stickers if s.is_animated)} TGS + {sum(1 for s in stickers if s.is_video)} video + {sum(1 for s in stickers if not (s.is_animated or s.is_video))} static)")
 
-        sem = asyncio.Semaphore(5)
+        sem = asyncio.Semaphore(2)
 
         async def process_one_sticker(i, sticker):
             async with sem:
@@ -2240,7 +2241,7 @@ async def process_local_folder(client: Client, message: Message):
 
         total_processed = 0
         zip_paths = []
-        _local_sem = asyncio.Semaphore(5)
+        _local_sem = asyncio.Semaphore(2)
 
         for type_name, files in types_to_process:
             chunks = split_into_chunks(files, 30)
@@ -2409,7 +2410,7 @@ async def process_zip_upload(client: Client, message: Message):
                 if send_to_private and message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]
                 else message.chat.id
             )
-            _zip_sem = asyncio.Semaphore(5)
+            _zip_sem = asyncio.Semaphore(2)
 
             for type_name, files in types_to_process:
                 chunks = split_into_chunks(files, 30)
