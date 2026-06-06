@@ -540,7 +540,7 @@ def _encode_animated_webp_under_limit(
         best_buf, best_q, best_size, used_method = _quality_search(
             cur_frames,
             cur_dur,
-            qualities=[72, 58, 46, 34, 24],
+            qualities=[55, 42, 32, 24, 16],
             method=0,
         )
 
