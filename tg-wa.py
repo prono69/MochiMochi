@@ -699,53 +699,54 @@ async def convert_video_to_animated_webp(video_data: bytes) -> BytesIO:
         try:
             probe = await _run_cpu_bound(ffmpeg.probe, str(input_path))
             video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
-            
-            # For WebM, format-level duration is more reliable than stream-level
-            # Try format duration first, then stream duration, then calculate from frame count
+
             format_duration = probe.get('format', {}).get('duration')
             stream_duration = video_info.get('duration')
             nb_frames = video_info.get('nb_frames')
-            
+
             if format_duration and float(format_duration) > 0.1:
                 duration = float(format_duration)
             elif stream_duration and float(stream_duration) > 0.1:
                 duration = float(stream_duration)
             elif nb_frames and int(nb_frames) > 0:
-                # Calculate from frame count and fps
                 input_fps = parse_frame_rate(video_info.get('r_frame_rate', '30/1'))
                 duration = int(nb_frames) / input_fps
             else:
                 duration = 0.0
-            
+
             input_fps = parse_frame_rate(video_info.get('r_frame_rate', '15/1'))
-            logger.info(f"Video probe: format_duration={format_duration}s, stream_duration={stream_duration}s, fps={input_fps:.2f}, frames={nb_frames}")
+            logger.info(f"Video probe: format_duration={format_duration}s, stream_duration={stream_duration}, fps={input_fps:.2f}, frames={nb_frames}")
+
         except Exception as e:
             logger.warning(f"Could not probe input: {e}, using defaults")
             duration = 0.0
             input_fps = 15.0
 
-        # For WebM stickers, duration metadata is often broken (reports 0.001-0.002s for 1-2s videos).
-        # 20fps is visually smooth at sticker size and cuts frame count by ~17% vs 24fps,
-        # reducing encode time accordingly.
-        target_fps = min(input_fps, 15.0)
+        # Adaptive fps based on real duration
+        if duration > 6.0:
+            target_fps = min(input_fps, 10.0)
+        elif duration > 3.0:
+            target_fps = min(input_fps, 12.0)
+        else:
+            target_fps = min(input_fps, 15.0)
         target_fps = max(target_fps, 8.0)
         frame_duration_ms = max(8, int(1000.0 / target_fps))
-        
-        # Cap frames so total animation duration never exceeds WhatsApp's 10-second limit.
-        # (duration metadata in WebM stickers is unreliable, so we cap by frame count instead.)
-        max_frames = min(240, int(10000 / frame_duration_ms))
+
+        # Cap max_frames based on whether duration metadata is trustworthy
+        if duration > 0.1:
+            max_frames = min(240, int(duration * target_fps) + 5)
+            logger.info(f"Trusted duration {duration:.2f}s → max_frames={max_frames} at {target_fps:.0f}fps")
+        else:
+            max_frames = int(3.0 * target_fps)  # broken metadata — cap at 3s worth
+            logger.warning(f"Broken duration metadata (got {format_duration}s), capping extraction at {max_frames} frames")
 
         # --- 2. Extract frames as RGBA PNG using ffmpeg ---
-        # Force -c:v libvpx-vp9 (software decoder) — same as sticker-convert's
-        # CodecContext.create("libvpx-vp9", "r"). The hardware vp9 decoder does NOT
-        # expose the VP9 alpha plane; the software libvpx-vp9 decoder does.
-        # Extract ALL available frames up to max_frames (ignoring broken duration metadata)
         extract_cmd = [
             'ffmpeg', '-y',
-            '-c:v', 'libvpx-vp9',       # force software decoder to get alpha plane
+            '-c:v', 'libvpx-vp9',
             '-i', str(input_path),
             '-vf', f'fps={target_fps},format=rgba',
-            '-vframes', str(max_frames),  # safety limit only
+            '-vframes', str(max_frames),
             '-vsync', 'cfr',
             str(frames_dir / 'frame_%04d.png')
         ]
@@ -768,7 +769,7 @@ async def convert_video_to_animated_webp(video_data: bytes) -> BytesIO:
         for ff in frame_files:
             try:
                 img = Image.open(ff).convert("RGBA")
-                canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))  # fully transparent
+                canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
                 img.thumbnail((512, 512), Image.LANCZOS)
                 x = (512 - img.width) // 2
                 y = (512 - img.height) // 2
@@ -780,13 +781,10 @@ async def convert_video_to_animated_webp(video_data: bytes) -> BytesIO:
         if len(pil_frames) == 0:
             raise Exception("No valid frames could be decoded from video")
         if len(pil_frames) == 1:
-            # Single-frame video sticker — duplicate frame so WhatsApp accepts it as animated
             logger.warning("Video sticker has only 1 frame; duplicating to satisfy WhatsApp animated requirement")
             pil_frames = pil_frames * 2
 
         # --- 4. Encode animated WebP using shared helper ---
-        # Uses finer quality steps + frame decimation to guarantee ≤500KB
-        # while keeping kmax=1 / allow_mixed / alpha_quality intact.
         output = await _run_cpu_bound(
             _encode_animated_webp_under_limit,
             pil_frames,
@@ -795,13 +793,12 @@ async def convert_video_to_animated_webp(video_data: bytes) -> BytesIO:
         )
         final_size = output.seek(0, 2)
         output.seek(0)
-        
-        # CRITICAL: Verify output is under 500KB hard limit
+
         if final_size > WA_MAX_BYTES:
             raise Exception(f"Encoded output is {final_size // 1024}KB, exceeds 500KB hard limit")
         if final_size > WA_ANIM_TARGET:
             raise Exception(f"Encoder bug: output is {final_size // 1024}KB, exceeds target {WA_ANIM_TARGET // 1024}KB")
-        
+
         logger.info(
             f"✓ Video → animated WebP: "
             f"{len(pil_frames)} source frames, {final_size / 1024:.1f}KB, "
